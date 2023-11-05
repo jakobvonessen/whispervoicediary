@@ -288,9 +288,7 @@ class _HomeState extends State<Home> {
       appBar: AppBar(
         title: const Text('Whisper voice diary'),
       ),
-      body: showInstruction
-          ? Instructions()
-          : Builder(
+      body: Builder(
               builder: (context) {
                 return Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -346,38 +344,6 @@ class _HomeState extends State<Home> {
                 );
               },
             ),
-    );
-  }
-}
-
-class Instructions extends StatelessWidget {
-  const Instructions({
-    Key? key,
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-              'You need to get dropbox_key & dropbox_secret from https://www.dropbox.com/developers'),
-          SizedBox(height: 20),
-          Text('1. Update dropbox_key and dropbox_secret from main.dart'),
-          SizedBox(height: 20),
-          Text(
-              "  const String dropbox_key = 'DROPBOXKEY';\n  const String dropbox_secret = 'DROPBOXSECRET';"),
-          SizedBox(height: 20),
-          Text(
-              '2. (Android) Update dropbox_key from android/app/src/main/AndroidManifest.xml.\n  <data android:scheme="db-DROPBOXKEY" />'),
-          SizedBox(height: 20),
-          Text(
-              '2. (iOS) Update dropbox_key from ios/Runner/Info.plist.\n  <string>db-DROPBOXKEY</string>'),
-        ],
-      ),
     );
   }
 }

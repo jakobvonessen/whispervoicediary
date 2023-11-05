@@ -13,12 +13,11 @@ dependencies:
     sdk: flutter
   dropbox_client: 1.1.0
   flutter_sound: 9.2.13
+  fluttertoast: 8.2.2
   intl: 0.18.1
   shared_preferences: 2.2.2
   path_provider: 2.1.1
   permission_handler: 11.0.1
-
-
 
 dev_dependencies:
   flutter_test:

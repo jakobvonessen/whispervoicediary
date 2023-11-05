@@ -1,4 +1,5 @@
 import 'secrets.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:intl/intl.dart';
@@ -37,65 +38,124 @@ class _HomeState extends State<Home> {
   @override
   void initState() {
     super.initState();
-
     initDropbox();
   }
 
   FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  String filePath = "";
+  String tempFileName = "";
+  bool _isRecording = false;
+  bool _isPaused = false;
+  bool _hasRecorded = false;
+  bool _isUploading = false;
+  int _uploadProgress = 0;
+  bool _hasUploaded = false;
+  String _preUploadMessage = "Upload";
 
-  Future<Map<String, String>> startRecording() async {
+  Future<String> getExternalPath() async {
+    if (await Permission.storage.request().isGranted) {
+      // Get the external storage directory
+      final Directory? externalDir = (await getExternalStorageDirectory())?.parent;
+      String newFolderName = "Whisperer";
+      // Find existing or create a new directory
+      final Directory newDirectory = Directory('${externalDir?.path}/$newFolderName');
+      if (!await newDirectory.exists()) {
+        await newDirectory.create(recursive: true);
+      }
+      return newDirectory.path;
+    } else {
+      throw Exception('Storage Permission not granted');
+    }
+  }
+
+  Future startRecording() async {
     final status = await Permission.microphone.request();
     if (status != PermissionStatus.granted) {
       throw RecordingPermissionException('Microphone permission not granted');
     }
     await _recorder.openRecorder();
-    var tempDir = await getTemporaryDirectory();
-    var tempFileName = DateFormat('yyyy-MM-dd-HH-mm-ss').format(DateTime.now());
-    var filePath = '${tempDir.path}/$tempFileName.aac';
+
+    var saveDir = await getExternalPath();
+    tempFileName = DateFormat('yyyy-MM-dd-HH-mm-ss').format(DateTime.now());
+    filePath = '${saveDir}/$tempFileName.aac';
     await _recorder.startRecorder(toFile: filePath);
-    // Return both values in a Map
-    return {
-      'filePath': filePath,
-      'tempFileName': tempFileName,
-    };
+    setState(() {
+      _isRecording = true;
+      _hasRecorded = false;
+    });
+  }
+
+  Future<void> toggleRecording() async {
+    if (_recorder.isRecording) {
+      await _recorder.pauseRecorder();
+      setState(() {
+        _isPaused = true;
+      });
+    } else if (_recorder.isPaused) {
+      await _recorder.resumeRecorder();
+      setState(() {
+        _isPaused = false;
+      });
+    }
   }
 
   Future stopRecording() async {
-    return await _recorder.stopRecorder();
+    await _recorder.stopRecorder();
+    setState(() {
+      _isRecording = false;
+      _hasRecorded = true;
+      _hasUploaded = false;
+    });
   }
 
   Future uploadVoiceRecording() async {
+    setState(() {
+      _hasUploaded = false;
+    });
     if (await checkAuthorized(true)) {
-      var recordingData = await startRecording();
-      // Give the user some time to record something
-      await Future.delayed(Duration(seconds: 5));
-      await stopRecording();
-
-      // Now we can upload the file to Dropbox using the map's values
       final result = await Dropbox.upload(
-        recordingData['filePath']!,
-        '/${recordingData['tempFileName']}.aac',
+        filePath,
+        '/${tempFileName}.aac',
         (uploaded, total) {
-          print('progress $uploaded / $total');
+          setState(() {
+            _isUploading = true;
+            _uploadProgress = ((uploaded / total) * 100).round();
+          });
         },
       );
-      print(result);
+
+      setState(() {
+        _isUploading = false;
+      });
+      if (await fileExistsInDropbox()) {
+        setState(() {
+          _hasUploaded = true;
+          _preUploadMessage = "Upload";
+        });
+      } else {
+        setState(() {
+          _hasUploaded = false;
+          _preUploadMessage = "unlink and link account";
+        });
+      }
     }
   }
 
-  Future initDropbox() async {
-    if (dropbox_key == 'dropbox_key') {
-      showInstruction = true;
-      return;
+  Future<bool> fileExistsInDropbox() async {
+    var error_text = "expired_access_token";
+    final result = await Dropbox.getTemporaryLink('/${tempFileName}.aac');
+    if (result!.contains(error_text)) {
+      return false;
     }
+    return true;
+  }
 
+  Future initDropbox() async {
     await Dropbox.init(dropbox_clientId, dropbox_key, dropbox_secret);
-
     SharedPreferences prefs = await SharedPreferences.getInstance();
     accessToken = prefs.getString('dropboxAccessToken');
     credentials = prefs.getString('dropboxCredentials');
-
-    setState(() {});
+    final _credentials = await Dropbox.getCredentials();
   }
 
   Future<bool> checkAuthorized(bool authorize) async {
@@ -275,12 +335,6 @@ class _HomeState extends State<Home> {
                           onPressed: authorize,
                         ),
                         ElevatedButton(
-                          child: Text('authorizeWithAccessToken'),
-                          onPressed: accessToken == null
-                              ? null
-                              : authorizeWithAccessToken,
-                        ),
-                        ElevatedButton(
                           child: Text('unlink'),
                           onPressed: unlinkToken,
                         ),
@@ -289,60 +343,34 @@ class _HomeState extends State<Home> {
                     Wrap(
                       children: <Widget>[
                         ElevatedButton(
-                          child: Text('authorizePKCE'),
-                          onPressed: authorizePKCE,
+                          child: Text(_isRecording ? (_isPaused ? "Resume recording" : "Pause recording") : "Start recording"),
+                          onPressed: () async {
+                            if (_isRecording) {
+                              await toggleRecording();
+                            } else {
+                              await startRecording();
+                            }
+                          }
                         ),
-                        ElevatedButton(
-                          child: Text('authorizeWithCredentials'),
-                          onPressed: credentials == null
-                              ? null
-                              : authorizeWithCredentials,
-                        ),
-                        ElevatedButton(
-                          child: Text('unlink'),
-                          onPressed: unlinkCredentials,
-                        ),
-                      ],
+                      ]
                     ),
                     Wrap(
                       children: <Widget>[
                         ElevatedButton(
-                          child: Text('list root folder'),
-                          onPressed: () async {
-                            await listFolder('');
-                          },
+                          child: Text(_isRecording ? "Stop recording" : "Please start recording"),
+                          onPressed: _isRecording ? () async {
+                            await stopRecording();
+                          } : null,
                         ),
+                      ]
+                    ),
+                    Wrap(
+                      children: <Widget>[
                         ElevatedButton(
-                          child: Text('Record & Upload'),
-                          onPressed: () async {
+                          child: Text(_hasRecorded ? (_hasUploaded ? "Uploaded" : (_isUploading ? "Progress: $_uploadProgress %" : _preUploadMessage)) : "Please record first"),
+                          onPressed: _hasRecorded && !_hasUploaded ? () async {
                             await uploadVoiceRecording();
-                          },
-                        ),
-                        ElevatedButton(
-                          child: Text('test upload'),
-                          onPressed: () async {
-                            await uploadTest();
-                          },
-                        ),
-                        ElevatedButton(
-                          child: Text('test download'),
-                          onPressed: () async {
-                            await downloadTest();
-                          },
-                        ),
-                        ElevatedButton(
-                          child: Text('test thumbnail'),
-                          onPressed: () async {
-                            // await getThumbnail('/icon64.png');
-                            await getThumbnail('/Get Started with Dropbox.pdf');
-                          },
-                        ),
-                        if (thumbImage != null) Image.memory(thumbImage!),
-                        ElevatedButton(
-                          child: Text('getAccountInfo'),
-                          onPressed: () async {
-                            await getAccountInfo();
-                          },
+                          } : null,
                         ),
                       ],
                     ),

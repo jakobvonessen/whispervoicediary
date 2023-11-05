@@ -50,7 +50,48 @@ class _HomeState extends State<Home> {
   bool _isUploading = false;
   int _uploadProgress = 0;
   bool _hasUploaded = false;
+  bool _isLinked = true;
   String _preUploadMessage = "Upload";
+  String _recordingSeconds = "0";
+  final Stopwatch _stopwatch = Stopwatch();
+  Timer? _timer;
+
+
+  void startTimer() {
+    _stopwatch.reset();
+    setState(() {
+      _recordingSeconds = "0";
+    });
+    _stopwatch.start();
+    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
+      setState(() {
+        _recordingSeconds = _stopwatch.elapsed.inSeconds.toString();
+      });
+    });
+  }
+  void toggleTimer() {
+    if (_stopwatch.isRunning) {
+      _stopwatch.stop();
+      _timer?.cancel();
+    } else {
+      _stopwatch.start();
+      _timer = Timer.periodic(Duration(seconds: 1), (timer) {
+        setState(() {
+          _recordingSeconds = _stopwatch.elapsed.inSeconds.toString();
+        });
+      });
+    }
+  }
+
+  void stopTimer() {
+    _stopwatch.stop();
+    _timer?.cancel();
+  }
+
+  void resetTimer() {
+    _stopwatch.reset();
+    setState(() {});
+  }
 
   Future<String> getExternalPath() async {
     if (await Permission.storage.request().isGranted) {
@@ -83,6 +124,7 @@ class _HomeState extends State<Home> {
       _isRecording = true;
       _hasRecorded = false;
     });
+    startTimer();
   }
 
   Future<void> toggleRecording() async {
@@ -97,6 +139,7 @@ class _HomeState extends State<Home> {
         _isPaused = false;
       });
     }
+    toggleTimer();
   }
 
   Future stopRecording() async {
@@ -106,6 +149,7 @@ class _HomeState extends State<Home> {
       _hasRecorded = true;
       _hasUploaded = false;
     });
+    stopTimer();
   }
 
   Future uploadVoiceRecording() async {
@@ -113,21 +157,29 @@ class _HomeState extends State<Home> {
       _hasUploaded = false;
     });
     if (await checkAuthorized(true)) {
-      final result = await Dropbox.upload(
-        filePath,
-        '/${tempFileName}.aac',
-        (uploaded, total) {
-          setState(() {
-            _isUploading = true;
-            _uploadProgress = ((uploaded / total) * 100).round();
-          });
-        },
-      );
-
+      try {
+        final result = await Dropbox.upload(
+          filePath,
+          '/${tempFileName}.aac',
+          (uploaded, total) {
+            setState(() {
+              _isUploading = true;
+              _uploadProgress = ((uploaded / total) * 100).round();
+            });
+          },
+        );
+        setState(() {
+          _isLinked = true;
+        });
+      } catch (e) {
+        setState(() {
+          _isLinked = false;
+        });
+      }
       setState(() {
         _isUploading = false;
       });
-      if (await fileExistsInDropbox()) {
+      if (_isLinked && await fileExistsInDropbox()) {
         setState(() {
           _hasUploaded = true;
           _preUploadMessage = "Upload";
@@ -207,26 +259,12 @@ class _HomeState extends State<Home> {
     await Dropbox.authorize();
   }
 
-  Future authorizePKCE() async {
-    await Dropbox.authorizePKCE();
-  }
-
   Future unlinkToken() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     prefs.remove('dropboxAccessToken');
 
     setState(() {
       accessToken = null;
-    });
-    await Dropbox.unlink();
-  }
-
-  Future unlinkCredentials() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    prefs.remove('dropboxCredentials');
-
-    setState(() {
-      credentials = null;
     });
     await Dropbox.unlink();
   }
@@ -239,86 +277,16 @@ class _HomeState extends State<Home> {
     await Dropbox.authorizeWithCredentials(credentials!);
   }
 
-  Future getAccountName() async {
-    if (await checkAuthorized(true)) {
-      final user = await Dropbox.getAccountName();
-      print('user = $user');
-    }
-  }
-
-  Future listFolder(path) async {
-    if (await checkAuthorized(true)) {
-      final result = await Dropbox.listFolder(path);
-      setState(() {
-        list.clear();
-        list.addAll(result);
-      });
-    }
-  }
-
-  Future uploadTest() async {
-    if (await checkAuthorized(true)) {
-      var tempDir = await getTemporaryDirectory();
-      var filepath = '${tempDir.path}/test_upload.txt';
-      File(filepath).writeAsStringSync(
-          'contents.. from ' + (Platform.isIOS ? 'iOS' : 'Android') + '\n');
-
-      final result =
-          await Dropbox.upload(filepath, '/test_upload.txt', (uploaded, total) {
-        print('progress $uploaded / $total');
-      });
-      print(result);
-    }
-  }
-
-  Future downloadTest() async {
-    if (await checkAuthorized(true)) {
-      var tempDir = await getTemporaryDirectory();
-      var filepath = '${tempDir.path}/test_download.zip'; // for iOS only!!
-      print(filepath);
-
-      final result = await Dropbox.download('/file_in_dropbox.zip', filepath,
-          (downloaded, total) {
-        print('progress $downloaded / $total');
-      });
-
-      print(result);
-      print(File(filepath).statSync());
-    }
-  }
-
   Future<String?> getTemporaryLink(path) async {
     final result = await Dropbox.getTemporaryLink(path);
     return result;
   }
 
-  Uint8List? thumbImage;
-
-  Future getThumbnail(path) async {
-    final b64 = await Dropbox.getThumbnailBase64String(path);
-
-    setState(() {
-      thumbImage = base64Decode(b64!);
-    });
-  }
-
-  Future getAccountInfo() async {
-    final accountInfo = await Dropbox.getCurrentAccount();
-
-    if (accountInfo != null) {
-      print(accountInfo.name!.displayName);
-      print(accountInfo.email!);
-      print(accountInfo.rootInfo!.homeNamespaceId!);
-    }
-  }
-
-  final list = List<dynamic>.empty(growable: true);
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Dropbox example app'),
+        title: const Text('Whisper voice diary'),
       ),
       body: showInstruction
           ? Instructions()
@@ -343,7 +311,7 @@ class _HomeState extends State<Home> {
                     Wrap(
                       children: <Widget>[
                         ElevatedButton(
-                          child: Text(_isRecording ? (_isPaused ? "Resume recording" : "Pause recording") : "Start recording"),
+                          child: Text(_isRecording ? (_isPaused ? "Resume recording (${_recordingSeconds})" : "Pause recording (${_recordingSeconds})") : "Start recording"),
                           onPressed: () async {
                             if (_isRecording) {
                               await toggleRecording();
@@ -373,36 +341,6 @@ class _HomeState extends State<Home> {
                           } : null,
                         ),
                       ],
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: list.length,
-                        itemBuilder: (context, index) {
-                          final item = list[index];
-                          final filesize = item['filesize'];
-                          final path = item['pathLower'];
-                          bool isFile = false;
-                          var name = item['name'];
-                          if (filesize == null) {
-                            name += '/';
-                          } else {
-                            isFile = true;
-                          }
-                          return ListTile(
-                              title: Text(name),
-                              onTap: () async {
-                                if (isFile) {
-                                  final link = await getTemporaryLink(path);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                          content: Text(link ??
-                                              'getTemporaryLink error: $path')));
-                                } else {
-                                  await listFolder(path);
-                                }
-                              });
-                        },
-                      ),
                     ),
                   ],
                 );
